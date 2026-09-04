@@ -222,8 +222,20 @@ def _detail_from_record(record: dict[str, Any]) -> dict[str, Any]:
 	evidence = record.get("evidence") or []
 	best = evidence[0] if evidence and isinstance(evidence[0], dict) else {}
 	ai = record.get("ai_decision", {})
+	settlement = {
+		key: value
+		for key, value in record.items()
+		if key == "settlement_id" or key.startswith("settlement_")
+	}
+	if not settlement:
+		settlement = {
+			key: value
+			for key, value in best.items()
+			if key == "settlement_id" or key.startswith("settlement_")
+		}
 	return {
 		"payment": {key: value for key, value in record.items() if key.startswith("normalized_") is False},
+		"settlement": settlement,
 		"selected bank candidate": record.get("bank_transaction_id") or best.get("bank_transaction_id"),
 		"deterministic score": best.get("overall_score", best.get("match_score")),
 		"signal scores": {key: best.get(key) for key in (
@@ -236,7 +248,9 @@ def _detail_from_record(record: dict[str, Any]) -> dict[str, Any]:
 	}
 
 
-def render_exceptions(records: list[dict[str, Any]]) -> None:
+def render_exceptions(
+	records: list[dict[str, Any]], output: ReconciliationOutput | None = None
+) -> None:
 	"""Render an investigation panel for human review and exception records."""
 	st.subheader("Exception Investigation")
 	cases = [record for record in records if record.get("decision") in {"HUMAN_REVIEW", "EXCEPTION"}]
@@ -247,12 +261,32 @@ def render_exceptions(records: list[dict[str, Any]]) -> None:
 	selected_id = st.selectbox("Payment ID", list(by_id))
 	record = by_id[selected_id]
 	detail = _detail_from_record(record)
+	audit_events = {
+		str(event.payment_id): event
+		for event in (output.audit_events if output is not None else [])
+		if event.payment_id is not None
+	}
+	event = audit_events.get(str(selected_id))
+	if event is not None and event.ai_used:
+		detail["ai"] = {
+			"decision": event.ai_decision,
+			"confidence": event.ai_confidence,
+			"selected_bank_transaction_id": event.ai_selected_bank_transaction_id,
+			"reason_codes": event.ai_reason_codes,
+			"explanation": event.ai_explanation,
+			"missing_evidence": event.ai_missing_evidence,
+			"model": event.ai_model,
+		}
 	left, right = st.columns(2)
 	with left:
 		st.markdown("### Transaction Evidence")
-		st.json({"payment": detail["payment"], "settlement": detail["settlement"], "bank candidate": detail["selected bank candidate"]})
+		st.json({
+			"payment": detail.get("payment", {}),
+			"settlement": detail.get("settlement") or {"status": "Unavailable"},
+			"bank candidate": detail.get("selected bank candidate") or "Unavailable",
+		})
 		st.markdown("### Deterministic Analysis")
-		st.json({key: detail[key] for key in ("deterministic score", "signal scores", "matching signals")})
+		st.json({key: detail.get(key) for key in ("deterministic score", "signal scores", "matching signals")})
 	with right:
 		st.markdown("### AI Analysis")
 		if detail["ai"]:
@@ -422,7 +456,7 @@ def main() -> None:
 	st.divider()
 	render_results(records)
 	st.divider()
-	render_exceptions(records)
+	render_exceptions(records, output)
 	st.divider()
 	render_audit(output)
 	st.divider()
