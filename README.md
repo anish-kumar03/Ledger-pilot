@@ -1,4 +1,4 @@
-# LedgerPilot — AI Finance Controller
+# LEDGER PILOT - AI FINANCE CONTROLLER 
 
 > **Models interpret. Rules authorize.**
 
@@ -25,7 +25,7 @@ The result is a controlled finance-ops workflow where AI is used **only where it
 ## Live Demo
 
 **Streamlit App:**  
-`PASTE_YOUR_STREAMLIT_URL_HERE`
+`https://ledgerpilot.streamlit.app/`
 
 **GitHub Repository:**  
 `PASTE_YOUR_GITHUB_REPOSITORY_URL_HERE`
@@ -160,3 +160,55 @@ AUTO_MATCH   AI_REVIEW      EXCEPTION
            Audit Trail
                 ↓
        Evaluation Dashboard
+
+
+# Understanding LedgerPilot: Web Application vs AI Agent
+
+A key distinction in LedgerPilot is the difference between the **web application** and the **AI agent**.
+
+LedgerPilot is best described as:
+
+> **A web-based AI Finance Controller that contains an AI-powered reconciliation agent inside a deterministic finance-operations workflow.**
+
+The Streamlit application is the **user-facing product and operational interface**.
+
+The `ReconciliationAgent` is the **AI reasoning component** that interprets ambiguous financial evidence.
+
+These are complementary parts of the same system, but they are not the same thing.
+
+---
+
+## 1. What Did We Actually Build?
+
+LedgerPilot consists of three major layers:
+
+```text
+┌───────────────────────────────────────────────────────┐
+│                 WEB APPLICATION                      │
+│                                                       │
+│              Streamlit — LedgerPilot                 │
+│                                                       │
+│ Dashboard | Results | Exceptions | Audit | Q&A        │
+└───────────────────────┬───────────────────────────────┘
+                        │
+                        ▼
+┌───────────────────────────────────────────────────────┐
+│              ORCHESTRATION & CONTROL                  │
+│                                                       │
+│         ReconciliationEngine + Policy Engine          │
+│                                                       │
+│ Normalize → Match → Score → Decide → Validate         │
+└───────────────────────┬───────────────────────────────┘
+                        │
+                        ▼
+┌───────────────────────────────────────────────────────┐
+│                    AI AGENT                           │
+│                                                       │
+│              ReconciliationAgent                      │
+│                        │                              │
+│                        ▼                              │
+│                 Groq / GPT-OSS-120B                  │
+│                        │                              │
+│                        ▼                              │
+│              Structured AI Decision                   │
+└───────────────────────────────────────────────────────┘
