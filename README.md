@@ -1,12 +1,6 @@
-# LedgerPilot — AI Finance Controller
+# LEDGER PILOT - AI FINANCE CONTROLLER
 
-> Models interpret. Rules authorize.
 
-![Live Demo](https://img.shields.io/badge/Live%20Demo-Available-success)
-![GitHub](https://img.shields.io/badge/GitHub-Repository-blue)
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![Tests](https://img.shields.io/badge/Tests-37%2F37%20Passed-success)
-![AI Provider](https://img.shields.io/badge/AI%20Provider-Groq-orange)
 
 ## 1. Executive Overview
 
