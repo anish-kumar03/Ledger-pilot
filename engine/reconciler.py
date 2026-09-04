@@ -36,6 +36,15 @@ class AuditEvent(BaseModel):
 	decision: str
 	reason_codes: list[str] = Field(default_factory=list)
 	evidence: dict[str, Any] = Field(default_factory=dict)
+	ai_used: bool = False
+	ai_model: str | None = None
+	ai_decision: str | None = None
+	ai_confidence: float | None = None
+	ai_selected_bank_transaction_id: str | None = None
+	ai_reason_codes: list[str] = Field(default_factory=list)
+	ai_explanation: str | None = None
+	ai_missing_evidence: list[str] = Field(default_factory=list)
+	final_policy_decision: str | None = None
 
 
 class ReconciliationOutput(BaseModel):
@@ -150,7 +159,10 @@ class ReconciliationEngine:
 						{"candidate": best_candidate.model_dump(), "score": best_score.model_dump()},
 					)
 					policy_result = self.policy.finalize_ai(
-						policy_result, ai_result.model_dump()
+						policy_result,
+						ai_result.model_dump(),
+						deterministic_score=best_score.overall_score,
+						candidate_ids={str(candidate.bank_transaction_id) for candidate in candidates},
 					)
 					final_bucket = {
 						PolicyDecision.AUTO_MATCH: "matches",
@@ -158,11 +170,25 @@ class ReconciliationEngine:
 						PolicyDecision.EXCEPTION: "exceptions",
 						PolicyDecision.AI_REVIEW: "human_review_cases",
 					}[policy_result.decision]
-					entry = {**policy_input, "ai_decision": ai_result.model_dump()}
+					selected_candidate = next(
+						(
+							{**candidate.model_dump(), **score.model_dump()}
+							for candidate, score in scored
+							if str(candidate.bank_transaction_id)
+							== ai_result.selected_bank_transaction_id
+						),
+						None,
+					)
+					entry = {
+						**policy_input,
+						"deterministic_best_candidate": policy_input,
+						"ai_selected_candidate": selected_candidate,
+						"ai_decision": ai_result.model_dump(),
+					}
 					self._append(output, final_bucket, payment, policy_result, [
 						{**candidate.model_dump(), **score.model_dump()}
 						for candidate, score in scored
-					])
+					], ai_result)
 					output.ai_assisted_decisions.append(entry)
 				else:
 					bucket = {
@@ -181,13 +207,14 @@ class ReconciliationEngine:
 				self._append(output, "exceptions", payment, result, [])
 		return output
 
-	@staticmethod
 	def _append(
+		self,
 		output: ReconciliationOutput,
 		bucket: str,
 		payment: Record,
 		result: PolicyResult,
 		evidence: list[dict[str, Any]],
+		ai_result: Any | None = None,
 	) -> None:
 		"""Append a result and exactly one audit event for a payment."""
 		entry = {
@@ -206,6 +233,17 @@ class ReconciliationEngine:
 				decision=result.decision.value,
 				reason_codes=result.blocked_conditions or result.policy_reasons,
 				evidence={"candidate_count": len(evidence), "records": evidence},
+				ai_used=ai_result is not None,
+				ai_model=(None if ai_result is None else getattr(self.ai_agent, "model", None)),
+				ai_decision=(None if ai_result is None else ai_result.decision),
+				ai_confidence=(None if ai_result is None else ai_result.confidence),
+				ai_selected_bank_transaction_id=(
+					None if ai_result is None else ai_result.selected_bank_transaction_id
+				),
+				ai_reason_codes=[] if ai_result is None else ai_result.reason_codes,
+				ai_explanation=None if ai_result is None else ai_result.explanation,
+				ai_missing_evidence=[] if ai_result is None else ai_result.missing_evidence,
+				final_policy_decision=result.decision.value,
 			)
 		)
 

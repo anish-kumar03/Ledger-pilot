@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 from typing import Any, Mapping, Protocol
 
+from pydantic import ValidationError
+
 from ai.schemas import AIReconciliationDecision
+from ai.prompts import build_reconciliation_prompt
 
 
 class _ModelClient(Protocol):
@@ -23,11 +27,15 @@ class ReconciliationAgent:
 		model: str = "gemini-2.5-flash",
 		client: _ModelClient | None = None,
 		api_key: str | None = None,
+		timeout_ms: int = 30_000,
 	) -> None:
-		"""Configure the model and optionally inject a compatible client."""
+		"""Configure the model, request timeout, and optional test client."""
+		if timeout_ms <= 0:
+			raise ValueError("timeout_ms must be positive")
 		self.model = model
 		self.api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
 		self._client = client
+		self.timeout_ms = timeout_ms
 
 	def reason(
 		self,
@@ -55,15 +63,15 @@ class ReconciliationAgent:
 				"REVIEW", "ai_unavailable", "AI review is unavailable; human review is required"
 			)
 
-		last_error = "ai_request_failed"
+		last_error = "ai_api_error"
 		for _attempt in range(2):
 			try:
-				response = self._generate(self._build_prompt(
+				response = self._generate(build_reconciliation_prompt(
 					payment, settlement, bank_candidates, deterministic_evidence
 				))
 				return self._parse_response(response)
-			except Exception as error:  # SDK and response-shape failures are isolated per record.
-				last_error = "malformed_ai_response" if _attempt else "ai_request_failed"
+			except Exception as error:  # Keep one bad model call isolated to its record.
+				last_error = self._classify_failure(error)
 		return self._fallback(
 			"REVIEW", last_error, "AI could not produce a valid decision; human review is required"
 		)
@@ -72,8 +80,12 @@ class ReconciliationAgent:
 		"""Generate structured content through the Google GenAI SDK."""
 		if self._client is None:
 			from google import genai
+			from google.genai import types
 
-			self._client = genai.Client(api_key=self.api_key)
+			self._client = genai.Client(
+				api_key=self.api_key,
+				http_options=types.HttpOptions(timeout=self.timeout_ms),
+			)
 		return self._client.models.generate_content(
 			model=self.model,
 			contents=prompt,
@@ -84,28 +96,13 @@ class ReconciliationAgent:
 		)
 
 	@staticmethod
-	def _build_prompt(
-		payment: Mapping[str, Any],
-		settlement: Mapping[str, Any],
-		bank_candidates: list[Mapping[str, Any]],
-		evidence: Mapping[str, Any],
-	) -> str:
-		"""Build a bounded evidence-only reasoning prompt."""
-		payload = {
-			"payment": dict(payment),
-			"settlement": dict(settlement),
-			"bank_candidates": [dict(candidate) for candidate in bank_candidates],
-			"deterministic_evidence": dict(evidence),
-		}
-		return (
-			"You are reviewing ambiguous financial reconciliation evidence. "
-			"Do not calculate, recompute, sum, or alter any financial totals. "
-			"Use only the supplied deterministic evidence. Return JSON matching "
-			"the requested schema. Choose MATCH only when one candidate is clearly "
-			"supported; otherwise choose REVIEW. Choose EXCEPTION when required "
-			"evidence is missing or invalid.\n\n"
-			+ json.dumps(payload, default=str, sort_keys=True)
-		)
+	def _classify_failure(error: Exception) -> str:
+		"""Map SDK, transport, and response failures to stable reason codes."""
+		if isinstance(error, (TimeoutError, socket.timeout)) or "timeout" in type(error).__name__.lower():
+			return "ai_timeout"
+		if isinstance(error, (ValidationError, json.JSONDecodeError, TypeError, ValueError)):
+			return "ai_validation_error"
+		return "ai_api_error"
 
 	@staticmethod
 	def _parse_response(response: Any) -> AIReconciliationDecision:
@@ -138,8 +135,9 @@ def reason_about_ambiguity(
 	*,
 	model: str = "gemini-2.5-flash",
 	client: _ModelClient | None = None,
+	timeout_ms: int = 30_000,
 ) -> AIReconciliationDecision:
 	"""Convenience wrapper around :class:`ReconciliationAgent`."""
-	return ReconciliationAgent(model=model, client=client).reason(
+	return ReconciliationAgent(model=model, client=client, timeout_ms=timeout_ms).reason(
 		payment, settlement, bank_candidates, deterministic_evidence
 	)

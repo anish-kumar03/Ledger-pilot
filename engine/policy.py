@@ -165,10 +165,26 @@ class PolicyEngine:
 		self,
 		deterministic_result: PolicyResult,
 		ai_decision: Mapping[str, Any],
+		*,
+		deterministic_score: float | None = None,
+		candidate_ids: set[str] | None = None,
 	) -> PolicyResult:
-		"""Apply deterministic policy to a validated AI recommendation."""
+		"""Apply deterministic policy to a validated AI recommendation.
+
+		AI confidence can never replace deterministic auto-match eligibility.
+		"""
 		if deterministic_result.blocked_conditions:
-			return deterministic_result
+			if "missing_source_record" in deterministic_result.blocked_conditions:
+				return PolicyResult(
+					decision=PolicyDecision.EXCEPTION,
+					policy_reasons=deterministic_result.policy_reasons,
+					blocked_conditions=deterministic_result.blocked_conditions,
+				)
+			return PolicyResult(
+				decision=PolicyDecision.HUMAN_REVIEW,
+				policy_reasons=deterministic_result.policy_reasons,
+				blocked_conditions=deterministic_result.blocked_conditions,
+			)
 		decision = ai_decision.get("decision")
 		confidence = ai_decision.get("confidence", 0.0)
 		if decision == "EXCEPTION":
@@ -177,7 +193,19 @@ class PolicyEngine:
 				policy_reasons=["AI identified an exception"] + list(ai_decision.get("reason_codes", [])),
 				blocked_conditions=["ai_exception"],
 			)
-		if decision == "MATCH" and confidence >= self.thresholds.auto_match_score:
+		selected_id = ai_decision.get("selected_bank_transaction_id")
+		if decision == "MATCH" and candidate_ids is not None and selected_id not in candidate_ids:
+			return PolicyResult(
+				decision=PolicyDecision.HUMAN_REVIEW,
+				policy_reasons=["AI selected a bank candidate not supplied to the model"],
+				blocked_conditions=["ai_selected_unknown_candidate"],
+			)
+		if (
+			decision == "MATCH"
+			and deterministic_score is not None
+			and deterministic_score >= self.thresholds.auto_match_score
+
+		):
 			return PolicyResult(
 				decision=PolicyDecision.AUTO_MATCH,
 				policy_reasons=["Validated AI recommendation meets the automatic-match threshold"],
