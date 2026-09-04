@@ -362,27 +362,45 @@ def _controller_context(records: list[dict[str, Any]], metrics: dict[str, Any]) 
 
 
 def _ask_gemini(question: str, context: dict[str, Any]) -> str:
-	"""Ask Gemini a read-only current-run question without creating another agent."""
-	if not os.getenv("GEMINI_API_KEY"):
-		return "Insufficient evidence in the current reconciliation run. Gemini is unavailable."
+	"""Ask a read-only current-run question using the Groq controller."""
 	try:
-		from google import genai
-		from google.genai import types
+		from groq import Groq
 
-		client = genai.Client(
-			api_key=os.environ["GEMINI_API_KEY"],
-			http_options=types.HttpOptions(timeout=30_000),
-		)
+		api_key = os.getenv("GROQ_API_KEY")
+		if not api_key:
+			return "Insufficient evidence in the current reconciliation run."
+
 		prompt = (
-			"You are a read-only finance controller answering questions about the supplied current "
-			"reconciliation run. Use only the JSON context. Do not modify records, decisions, policy, "
-			"or create financial records. Never invent missing data. If the answer is unavailable, say "
-			"exactly: Insufficient evidence in the current reconciliation run.\n\n"
-			f"Question: {question}\nContext: {json.dumps(context, default=str, sort_keys=True)}"
+			"You are a read-only finance controller answering questions about the supplied "
+			"current reconciliation run. Use ONLY the JSON context provided below. "
+			"Do not modify records, decisions, policy, or create financial records. "
+			"Never invent missing data. If the answer cannot be supported by the context, "
+			"return exactly: Insufficient evidence in the current reconciliation run.\n\n"
+			f"Question: {question}\n"
+			f"Context: {json.dumps(context, default=str, sort_keys=True)}"
 		)
-		response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-		answer = getattr(response, "text", None)
-		return answer.strip() if isinstance(answer, str) and answer.strip() else "Insufficient evidence in the current reconciliation run."
+
+		client = Groq(
+			api_key=api_key,
+			timeout=30.0,
+			max_retries=0,
+		)
+
+		response = client.chat.completions.create(
+			model="openai/gpt-oss-120b",
+			messages=[
+				{"role": "user", "content": prompt}
+			],
+			temperature=0,
+		)
+
+		answer = getattr(response.choices[0].message, "content", None)
+
+		if isinstance(answer, str) and answer.strip():
+			return answer.strip()
+
+		return "Insufficient evidence in the current reconciliation run."
+
 	except Exception:
 		return "Insufficient evidence in the current reconciliation run."
 
