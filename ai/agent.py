@@ -1,4 +1,4 @@
-"""Google GenAI reasoning for ambiguous reconciliation evidence."""
+"""Groq-powered reasoning for ambiguous reconciliation evidence."""
 
 from __future__ import annotations
 
@@ -7,24 +7,28 @@ import os
 import socket
 from typing import Any, Mapping, Protocol
 
+from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from ai.schemas import AIReconciliationDecision
 from ai.prompts import build_reconciliation_prompt
 
 
-class _ModelClient(Protocol):
-	"""Minimal protocol used to keep the GenAI client injectable in tests."""
+load_dotenv()
 
-	models: Any
+
+class _ModelClient(Protocol):
+	"""Minimal Groq client protocol used for dependency injection in tests."""
+
+	chat: Any
 
 
 class ReconciliationAgent:
-	"""Ask Gemini to reason about ambiguous evidence without doing arithmetic."""
+	"""Ask Groq to reason about ambiguous evidence without doing arithmetic."""
 
 	def __init__(
 		self,
-		model: str = "gemini-2.5-flash",
+		model: str = "openai/gpt-oss-120b",
 		client: _ModelClient | None = None,
 		api_key: str | None = None,
 		timeout_ms: int = 30_000,
@@ -33,7 +37,7 @@ class ReconciliationAgent:
 		if timeout_ms <= 0:
 			raise ValueError("timeout_ms must be positive")
 		self.model = model
-		self.api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
+		self.api_key = api_key if api_key is not None else os.getenv("GROQ_API_KEY")
 		self._client = client
 		self.timeout_ms = timeout_ms
 
@@ -77,21 +81,26 @@ class ReconciliationAgent:
 		)
 
 	def _generate(self, prompt: str) -> Any:
-		"""Generate structured content through the Google GenAI SDK."""
+		"""Generate structured JSON content through the official Groq SDK."""
 		if self._client is None:
-			from google import genai
-			from google.genai import types
+			from groq import Groq
 
-			self._client = genai.Client(
+			self._client = Groq(
 				api_key=self.api_key,
-				http_options=types.HttpOptions(timeout=self.timeout_ms),
+				timeout=self.timeout_ms / 1000,
+				max_retries=0,
 			)
-		return self._client.models.generate_content(
+		return self._client.chat.completions.create(
+			messages=[{"role": "user", "content": prompt}],
 			model=self.model,
-			contents=prompt,
-			config={
-				"response_mime_type": "application/json",
-				"response_schema": AIReconciliationDecision,
+			temperature=0,
+			response_format={
+				"type": "json_schema",
+				"json_schema": {
+					"name": "ai_reconciliation_decision",
+					"strict": True,
+					"schema": AIReconciliationDecision.model_json_schema(),
+				},
 			},
 		)
 
@@ -110,7 +119,11 @@ class ReconciliationAgent:
 		parsed = getattr(response, "parsed", None)
 		if parsed is not None:
 			return AIReconciliationDecision.model_validate(parsed)
-		text = getattr(response, "text", response)
+		choices = getattr(response, "choices", None)
+		if choices:
+			text = getattr(getattr(choices[0], "message", None), "content", None)
+		else:
+			text = getattr(response, "text", response)
 		if not isinstance(text, str):
 			raise ValueError("model response has no text or parsed payload")
 		return AIReconciliationDecision.model_validate(json.loads(text))
@@ -133,7 +146,7 @@ def reason_about_ambiguity(
 	bank_candidates: list[Mapping[str, Any]],
 	deterministic_evidence: Mapping[str, Any],
 	*,
-	model: str = "gemini-2.5-flash",
+	model: str = "openai/gpt-oss-120b",
 	client: _ModelClient | None = None,
 	timeout_ms: int = 30_000,
 ) -> AIReconciliationDecision:

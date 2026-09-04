@@ -32,8 +32,10 @@ MERCHANTS = (
 
 def _scenario_for(index: int) -> str:
 	"""Return the deterministic reconciliation scenario for a payment index."""
-	if index < 60:
+	if index < 50:
 		return "exact_match"
+	if index < 60:
+		return "ambiguous_review"
 	if index < 65:
 		return "reference_formatting_difference"
 	if index < 70:
@@ -57,6 +59,7 @@ def _status_for(scenario: str) -> str:
 	"""Map a generated scenario to the expected reconciliation status."""
 	return {
 		"exact_match": "matched",
+		"ambiguous_review": "ambiguous_review",
 		"reference_formatting_difference": "matched_after_reference_normalization",
 		"merchant_spelling_difference": "matched_after_merchant_normalization",
 		"date_offset": "matched_with_date_offset",
@@ -140,7 +143,11 @@ def generate_dataset(output_directory: Path | str = DEFAULT_OUTPUT_DIRECTORY) ->
 			bank_date = payment_date
 			bank_amount = amount - fee
 
-			if scenario == "reference_formatting_difference":
+			if scenario == "ambiguous_review":
+				bank_reference = f"{reference}X"
+				bank_merchant = merchant.replace("o", "0", 1)
+				bank_date = payment_date + timedelta(days=1)
+			elif scenario == "reference_formatting_difference":
 				bank_reference = reference.replace("-", " ").lower()
 			elif scenario == "merchant_spelling_difference":
 				bank_merchant = merchant.replace("o", "oo", 1)
